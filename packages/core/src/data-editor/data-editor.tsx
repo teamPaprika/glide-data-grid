@@ -32,6 +32,9 @@ import {
     type FillHandleDirection,
     type EditListItem,
     type CellActivationBehavior,
+    type QuerySelectionModel,
+    type SelectAllContext,
+    type ExportSelectionContext,
 } from "../internal/data-grid/data-grid-types.js";
 import DataGridSearch, { type DataGridSearchProps } from "../internal/data-grid-search/data-grid-search.js";
 import { browserIsOSX } from "../common/browser-detect.js";
@@ -696,6 +699,60 @@ export interface DataEditorProps extends Props, Pick<DataGridSearchProps, "image
      * Allows overriding the default portal element.
      */
     readonly portalElementRef?: React.RefObject<HTMLElement>;
+
+    /**
+     * Controls how "select all" behaves.
+     * - `"viewport"` (default): Standard behavior — selects all rows/cells as a range.
+     * - `"query"`: Triggers `onSelectAll` instead, allowing the consumer to express
+     *   "all rows in the current query" without materializing them.
+     * @group Selection
+     * @defaultValue `"viewport"`
+     */
+    readonly selectAllBehavior?: "viewport" | "query";
+
+    /**
+     * The current query-aware selection state. This is separate from `gridSelection`
+     * and represents bulk/logical selection for large datasets.
+     * @group Selection
+     */
+    readonly querySelection?: QuerySelectionModel;
+
+    /**
+     * Emitted when the query selection changes (e.g., user toggles individual rows
+     * while in query selection mode).
+     * @group Selection
+     */
+    readonly onQuerySelectionChange?: (next: QuerySelectionModel) => void;
+
+    /**
+     * Emitted when the user triggers a "select all" action in query mode.
+     * The consumer should update `querySelection` to `{ mode: "all-in-query", ... }`.
+     * @group Selection
+     */
+    readonly onSelectAll?: (ctx: SelectAllContext) => void;
+
+    /**
+     * Callback for exporting large selections. When provided and the selection exceeds
+     * the copy soft cap, this is called instead of writing to the clipboard.
+     * @group Selection
+     */
+    readonly exportSelection?: (ctx: ExportSelectionContext) => Promise<void>;
+
+    /**
+     * Maps a row index to a stable row key for use with `QuerySelectionModel`.
+     * Required when using query-aware selection.
+     * @group Selection
+     */
+    readonly getRowKey?: (row: number) => string | undefined;
+
+    /**
+     * Maximum number of cells allowed in a clipboard copy operation.
+     * If the selection exceeds this limit and `exportSelection` is provided,
+     * the export path is used instead. Set to 0 to disable the cap.
+     * @group Editing
+     * @defaultValue 50000
+     */
+    readonly copyCellCap?: number;
 }
 
 type ScrollToFn = (
@@ -855,6 +912,13 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
         onSearchClose: onSearchCloseIn,
         onItemHovered,
         onSelectionCleared,
+        selectAllBehavior = "viewport",
+        querySelection,
+        onQuerySelectionChange,
+        onSelectAll,
+        exportSelection,
+        getRowKey,
+        copyCellCap = 50_000,
         showSearch: showSearchIn,
         onVisibleRegionChanged,
         gridSelection: gridSelectionOuter,
@@ -1135,8 +1199,19 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
     const totalHeaderHeight = enableGroups ? headerHeight + groupHeaderHeight : headerHeight;
 
     const numSelectedRows = gridSelection.rows.length;
-    const rowMarkerChecked =
-        rowMarkers === "none" ? undefined : numSelectedRows === 0 ? false : numSelectedRows === rows ? true : undefined;
+    const rowMarkerChecked = React.useMemo(() => {
+        if (rowMarkers === "none") return undefined;
+        // When using query-aware selection, derive header checkbox state from querySelection
+        if (querySelection !== undefined && querySelection.mode !== "none") {
+            if (querySelection.mode === "all-in-query") {
+                return querySelection.excludedRowKeys.size === 0 ? true : undefined; // indeterminate if some excluded
+            }
+            if (querySelection.mode === "explicit") {
+                return querySelection.selectedRowKeys.size === 0 ? false : undefined; // indeterminate if some selected
+            }
+        }
+        return numSelectedRows === 0 ? false : numSelectedRows === rows ? true : undefined;
+    }, [rowMarkers, querySelection, numSelectedRows, rows]);
 
     const mangledCols = React.useMemo(() => {
         if (rowMarkers === "none") return columns;
@@ -1316,11 +1391,22 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
                 }
                 const mappedRow = rowNumberMapper(row);
                 if (mappedRow === undefined) return loadingCell;
+                let isChecked = gridSelection?.rows.hasIndex(row) === true;
+                if (querySelection !== undefined && querySelection.mode !== "none") {
+                    const rowKey = getRowKey?.(row);
+                    if (rowKey !== undefined) {
+                        if (querySelection.mode === "all-in-query") {
+                            isChecked = !querySelection.excludedRowKeys.has(rowKey);
+                        } else if (querySelection.mode === "explicit") {
+                            isChecked = querySelection.selectedRowKeys.has(rowKey);
+                        }
+                    }
+                }
                 return {
                     kind: InnerGridCellKind.Marker,
                     allowOverlay: false,
                     checkboxStyle: rowMarkerCheckboxStyle,
-                    checked: gridSelection?.rows.hasIndex(row) === true,
+                    checked: isChecked,
                     markerKind: rowMarkers === "clickable-number" ? "number" : rowMarkers,
                     row: rowMarkerStartIndex + mappedRow,
                     drawHandle: onRowMoved !== undefined,
@@ -1395,6 +1481,8 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
             trailingRowOptions?.addIcon,
             experimental?.strict,
             getCellContent,
+            querySelection,
+            getRowKey,
         ]
     );
 
@@ -1880,34 +1968,82 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
 
                     setOverlay(undefined);
                     focus();
-                    const isSelected = selectedRows.hasIndex(row);
 
-                    const lastHighlighted = lastSelectedRowRef.current;
+                    // Handle query selection mode row toggling
                     if (
-                        rowSelect === "multi" &&
-                        (args.shiftKey || args.isLongTouch === true) &&
-                        lastHighlighted !== undefined &&
-                        selectedRows.hasIndex(lastHighlighted)
+                        selectAllBehavior === "query" &&
+                        querySelection !== undefined &&
+                        querySelection.mode !== "none" &&
+                        onQuerySelectionChange !== undefined &&
+                        getRowKey !== undefined
                     ) {
-                        const newSlice: Slice = [Math.min(lastHighlighted, row), Math.max(lastHighlighted, row) + 1];
-
-                        if (isMultiRow || rowSelectionMode === "multi") {
-                            setSelectedRows(undefined, newSlice, true);
-                        } else {
-                            setSelectedRows(CompactSelection.fromSingleSelection(newSlice), undefined, isMultiRow);
+                        const rowKey = getRowKey(row);
+                        if (rowKey !== undefined) {
+                            if (querySelection.mode === "all-in-query") {
+                                const newExcluded = new Set(querySelection.excludedRowKeys);
+                                if (newExcluded.has(rowKey)) {
+                                    newExcluded.delete(rowKey);
+                                } else {
+                                    newExcluded.add(rowKey);
+                                }
+                                onQuerySelectionChange({
+                                    ...querySelection,
+                                    excludedRowKeys: newExcluded,
+                                });
+                            } else if (querySelection.mode === "explicit") {
+                                const newSelected = new Set(querySelection.selectedRowKeys);
+                                if (newSelected.has(rowKey)) {
+                                    newSelected.delete(rowKey);
+                                } else {
+                                    newSelected.add(rowKey);
+                                }
+                                onQuerySelectionChange(
+                                    newSelected.size === 0
+                                        ? { mode: "none" }
+                                        : { mode: "explicit", selectedRowKeys: newSelected }
+                                );
+                            }
                         }
-                    } else if (rowSelect === "multi" && (isMultiRow || args.isTouch || rowSelectionMode === "multi")) {
-                        if (isSelected) {
-                            setSelectedRows(selectedRows.remove(row), undefined, true);
+                    } else {
+                        const isSelected = selectedRows.hasIndex(row);
+
+                        const lastHighlighted = lastSelectedRowRef.current;
+                        if (
+                            rowSelect === "multi" &&
+                            (args.shiftKey || args.isLongTouch === true) &&
+                            lastHighlighted !== undefined &&
+                            selectedRows.hasIndex(lastHighlighted)
+                        ) {
+                            const newSlice: Slice = [
+                                Math.min(lastHighlighted, row),
+                                Math.max(lastHighlighted, row) + 1,
+                            ];
+
+                            if (isMultiRow || rowSelectionMode === "multi") {
+                                setSelectedRows(undefined, newSlice, true);
+                            } else {
+                                setSelectedRows(
+                                    CompactSelection.fromSingleSelection(newSlice),
+                                    undefined,
+                                    isMultiRow
+                                );
+                            }
+                        } else if (
+                            rowSelect === "multi" &&
+                            (isMultiRow || args.isTouch || rowSelectionMode === "multi")
+                        ) {
+                            if (isSelected) {
+                                setSelectedRows(selectedRows.remove(row), undefined, true);
+                            } else {
+                                setSelectedRows(undefined, row, true);
+                                lastSelectedRowRef.current = row;
+                            }
+                        } else if (isSelected && selectedRows.length === 1) {
+                            setSelectedRows(CompactSelection.empty(), undefined, isMultiKey);
                         } else {
-                            setSelectedRows(undefined, row, true);
+                            setSelectedRows(CompactSelection.fromSingleSelection(row), undefined, isMultiKey);
                             lastSelectedRowRef.current = row;
                         }
-                    } else if (isSelected && selectedRows.length === 1) {
-                        setSelectedRows(CompactSelection.empty(), undefined, isMultiKey);
-                    } else {
-                        setSelectedRows(CompactSelection.fromSingleSelection(row), undefined, isMultiKey);
-                        lastSelectedRowRef.current = row;
                     }
                 } else if (col >= rowMarkerOffset && showTrailingBlankRow && row === rows) {
                     const customTargetColumn = getCustomNewRowTargetColumn(col);
@@ -1998,7 +2134,28 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
                     lastSelectedRowRef.current = undefined;
                     lastSelectedColRef.current = undefined;
                     if (!headerRowMarkerDisabled && rowSelect === "multi") {
-                        if (selectedRows.length !== rows) {
+                        if (selectAllBehavior === "query" && onSelectAll !== undefined) {
+                            const isCurrentlyAllSelected =
+                                querySelection?.mode === "all-in-query" &&
+                                querySelection.excludedRowKeys.size === 0;
+                            if (isCurrentlyAllSelected) {
+                                // Deselect all
+                                onQuerySelectionChange?.({ mode: "none" });
+                            } else {
+                                const visibleRegion = visibleRegionRef.current;
+                                onSelectAll({
+                                    visibleRange: {
+                                        startRow: visibleRegion.y,
+                                        endRow: visibleRegion.y + visibleRegion.height,
+                                    },
+                                    selectionMode: "query",
+                                    currentQueryKey:
+                                        querySelection?.mode === "all-in-query"
+                                            ? querySelection.queryKey
+                                            : undefined,
+                                });
+                            }
+                        } else if (selectedRows.length !== rows) {
                             setSelectedRows(CompactSelection.fromSingleSelection([0, rows]), undefined, isMultiKey);
                         } else {
                             setSelectedRows(CompactSelection.empty(), undefined, isMultiKey);
@@ -2083,6 +2240,11 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
             setSelectedColumns,
             setGridSelection,
             onSelectionCleared,
+            selectAllBehavior,
+            onSelectAll,
+            querySelection,
+            onQuerySelectionChange,
+            getRowKey,
         ]
     );
     const isActivelyDraggingHeader = React.useRef(false);
@@ -3206,23 +3368,36 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
                 setGridSelection(emptyGridSelection, false);
                 onSelectionCleared?.();
             } else if (!overlayOpen && isHotkey(keys.selectAll, event, details)) {
-                setGridSelection(
-                    {
-                        columns: CompactSelection.empty(),
-                        rows: CompactSelection.empty(),
-                        current: {
-                            cell: gridSelection.current?.cell ?? [rowMarkerOffset, 0],
-                            range: {
-                                x: rowMarkerOffset,
-                                y: 0,
-                                width: columnsIn.length,
-                                height: rows,
-                            },
-                            rangeStack: [],
+                if (selectAllBehavior === "query" && onSelectAll !== undefined) {
+                    const visibleRegion = visibleRegionRef.current;
+                    onSelectAll({
+                        visibleRange: {
+                            startRow: visibleRegion.y,
+                            endRow: visibleRegion.y + visibleRegion.height,
                         },
-                    },
-                    false
-                );
+                        selectionMode: "query",
+                        currentQueryKey:
+                            querySelection?.mode === "all-in-query" ? querySelection.queryKey : undefined,
+                    });
+                } else {
+                    setGridSelection(
+                        {
+                            columns: CompactSelection.empty(),
+                            rows: CompactSelection.empty(),
+                            current: {
+                                cell: gridSelection.current?.cell ?? [rowMarkerOffset, 0],
+                                range: {
+                                    x: rowMarkerOffset,
+                                    y: 0,
+                                    width: columnsIn.length,
+                                    height: rows,
+                                },
+                                rangeStack: [],
+                            },
+                        },
+                        false
+                    );
+                }
             } else if (isHotkey(keys.search, event, details)) {
                 searchInputRef?.current?.focus({ preventScroll: true });
                 setShowSearchInner(true);
@@ -3464,6 +3639,10 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
             updateSelectedCell,
             setGridSelection,
             onSelectionCleared,
+            selectAllBehavior,
+            onSelectAll,
+            querySelection,
+            onQuerySelectionChange,
             columnsIn.length,
             onDelete,
             trapFocus,
@@ -3780,6 +3959,50 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
             const selectedColumns = gridSelection.columns;
             const selectedRows = gridSelection.rows;
 
+            // Calculate total cell count for soft cap check
+            const getCellCount = (): number => {
+                if (gridSelection.current !== undefined) {
+                    const r = gridSelection.current.range;
+                    return r.width * r.height;
+                }
+                if (selectedRows.length > 0) {
+                    return selectedRows.length * columnsIn.length;
+                }
+                if (selectedColumns.length > 0) {
+                    return selectedColumns.length * rows;
+                }
+                return 0;
+            };
+
+            // Check if we should use the export path instead
+            if (focused && copyCellCap > 0 && exportSelection !== undefined) {
+                const cellCount = getCellCount();
+                if (cellCount > copyCellCap) {
+                    e?.preventDefault();
+                    void exportSelection({
+                        gridSelection,
+                        querySelection,
+                        format: "csv",
+                    });
+                    return;
+                }
+            }
+
+            // Also redirect to export if in query all-in-query mode with export available
+            if (
+                focused &&
+                exportSelection !== undefined &&
+                querySelection?.mode === "all-in-query"
+            ) {
+                e?.preventDefault();
+                void exportSelection({
+                    gridSelection,
+                    querySelection,
+                    format: "csv",
+                });
+                return;
+            }
+
             const copyToClipboardWithHeaders = (
                 cells: readonly (readonly GridCell[])[],
                 columnIndexes: readonly number[]
@@ -3864,9 +4087,12 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
         },
         [
             columnsIn,
+            copyCellCap,
+            exportSelection,
             getCellsForSelection,
             gridSelection,
             keybindings.copy,
+            querySelection,
             rowMarkerOffset,
             scrollRef,
             rows,
