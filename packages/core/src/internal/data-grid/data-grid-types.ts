@@ -520,6 +520,53 @@ export interface MarkerCell extends BaseGridCell {
     readonly markerKind: "checkbox" | "number" | "both" | "checkbox-visible";
 }
 
+/**
+ * Represents a query-aware selection model for large datasets.
+ *
+ * Unlike `GridSelection` which tracks cell/row/column highlights for UI interaction,
+ * `QuerySelectionModel` expresses bulk selection semantics that are suitable for
+ * query-driven datasets where materializing all selected rows is impractical.
+ *
+ * - `none`: No rows are selected.
+ * - `explicit`: A specific set of row keys is selected.
+ * - `all-in-query`: All rows matching the current query are selected, with an optional
+ *   set of excluded row keys.
+ *
+ * @category Selection
+ */
+export type QuerySelectionModel =
+    | { readonly mode: "none" }
+    | { readonly mode: "explicit"; readonly selectedRowKeys: ReadonlySet<string> }
+    | {
+          readonly mode: "all-in-query";
+          readonly queryKey?: string;
+          readonly excludedRowKeys: ReadonlySet<string>;
+          readonly estimatedTotalRows?: number;
+      };
+
+/**
+ * Context passed to the `onSelectAll` callback when the user triggers a select-all action.
+ * @category Selection
+ */
+export interface SelectAllContext {
+    /** The currently visible row range. */
+    readonly visibleRange: { readonly startRow: number; readonly endRow: number };
+    /** Which select-all behavior is active. */
+    readonly selectionMode: "viewport" | "query";
+    /** The current query key, if provided. */
+    readonly currentQueryKey?: string;
+}
+
+/**
+ * Context passed to the `exportSelection` callback for large-range exports.
+ * @category Selection
+ */
+export interface ExportSelectionContext {
+    readonly gridSelection: GridSelection;
+    readonly querySelection?: QuerySelectionModel;
+    readonly format: "csv" | "tsv" | "json";
+}
+
 /** @category Selection */
 export type Slice = [start: number, end: number];
 /** @category Selection */
