@@ -1,3 +1,38 @@
+# Wallaform Fork
+
+이 패키지는 [glideapps/glide-data-grid](https://github.com/glideapps/glide-data-grid) `6.0.4-alpha25` 기반의 fork이며, npm에 `@wallaform/glide-data-grid`로 publish됩니다.
+
+## 설치
+
+```bash
+npm install @wallaform/glide-data-grid
+```
+
+## 버전 규칙
+
+`6.0.4-wallaform.<n>` 형식. fork 변경 사항이 publish될 때마다 `<n>` 카운터를 증가시킵니다. (예: `6.0.4-wallaform.0` → `6.0.4-wallaform.1`)
+
+## 주요 변경 사항
+
+- query-aware select-all (대용량 데이터셋용)
+- multi-select pill text selection 허용
+
+자세한 변경 내역은 [CHANGELOG.md](./CHANGELOG.md) 참고.
+
+## Publish 방법
+
+```bash
+cd packages/core
+PATH="$PWD/../../node_modules/.bin:$PATH" /opt/homebrew/bin/bash ./build.sh
+npm publish --tag latest
+```
+
+> 빌드 스크립트가 bash 4+ 필요. macOS 기본 bash(3.2)로는 안 됨 → `brew install bash` 후 위처럼 호출.
+
+---
+
+# 원본 README
+
 <h1 align="center">
   <img src="https://raw.githubusercontent.com/glideapps/glide-data-grid/master/media/icon.png" width="224px"/><br/>
   <b>Glide Data Grid</b>

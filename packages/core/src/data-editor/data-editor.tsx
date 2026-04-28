@@ -2142,11 +2142,11 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
                                 // Deselect all
                                 onQuerySelectionChange?.({ mode: "none" });
                             } else {
-                                const visibleRegion = visibleRegionRef.current;
+                                const region = visibleRegionRef.current;
                                 onSelectAll({
                                     visibleRange: {
-                                        startRow: visibleRegion.y,
-                                        endRow: visibleRegion.y + visibleRegion.height,
+                                        startRow: region.y,
+                                        endRow: region.y + region.height,
                                     },
                                     selectionMode: "query",
                                     currentQueryKey:
@@ -3369,11 +3369,11 @@ const DataEditorImpl: React.ForwardRefRenderFunction<DataEditorRef, DataEditorPr
                 onSelectionCleared?.();
             } else if (!overlayOpen && isHotkey(keys.selectAll, event, details)) {
                 if (selectAllBehavior === "query" && onSelectAll !== undefined) {
-                    const visibleRegion = visibleRegionRef.current;
+                    const region = visibleRegionRef.current;
                     onSelectAll({
                         visibleRange: {
-                            startRow: visibleRegion.y,
-                            endRow: visibleRegion.y + visibleRegion.height,
+                            startRow: region.y,
+                            endRow: region.y + region.height,
                         },
                         selectionMode: "query",
                         currentQueryKey:

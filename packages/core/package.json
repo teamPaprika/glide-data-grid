@@ -1,6 +1,6 @@
 {
-    "name": "@glideapps/glide-data-grid",
-    "version": "6.0.4-alpha25",
+    "name": "@wallaform/glide-data-grid",
+    "version": "6.0.4-wallaform.0",
     "description": "React data grid for beautifully displaying and editing large amounts of data with amazing performance.",
     "sideEffects": [
         "**/*.css"
@@ -10,6 +10,12 @@
     "main": "dist/cjs/index.js",
     "module": "dist/esm/index.js",
     "types": "dist/dts/index.d.ts",
+    "files": [
+        "dist"
+    ],
+    "publishConfig": {
+        "access": "public"
+    },
     "exports": {
         ".": {
             "types": "./dist/dts/index.d.ts",
@@ -35,7 +41,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/glideapps/glide-data-grid.git",
+        "url": "git+https://github.com/teamPaprika/glide-data-grid.git",
         "directory": "packages/core"
     },
     "keywords": [
@@ -53,7 +59,7 @@
     "author": "Glide",
     "license": "MIT",
     "bugs": {
-        "url": "https://github.com/glideapps/glide-data-grid/issues"
+        "url": "https://github.com/teamPaprika/glide-data-grid/issues"
     },
     "homepage": "https://grid.glideapps.com",
     "dependencies": {

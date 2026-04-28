@@ -24,6 +24,7 @@ export default {
 
 const TOTAL_ROWS = 1_000_000;
 const QUERY_KEY = "demo-query-v1";
+const ALL_IN_QUERY = "all-in-query" as const;
 
 export const QueryAwareSelectAll: React.VFC = () => {
     const { cols, getCellContent } = useMockDataGenerator(10, true, true);
@@ -37,7 +38,7 @@ export const QueryAwareSelectAll: React.VFC = () => {
     const onSelectAll = React.useCallback(
         (_ctx: SelectAllContext) => {
             setQuerySelection({
-                mode: "all-in-query",
+                mode: ALL_IN_QUERY,
                 queryKey: QUERY_KEY,
                 excludedRowKeys: new Set(),
                 estimatedTotalRows: TOTAL_ROWS,
@@ -50,7 +51,7 @@ export const QueryAwareSelectAll: React.VFC = () => {
         async (ctx: ExportSelectionContext) => {
             // In a real app, this would trigger a server-side export
             const qs = ctx.querySelection;
-            if (qs?.mode === "all-in-query") {
+            if (qs?.mode === ALL_IN_QUERY) {
                 alert(
                     `Export triggered!\nQuery: ${qs.queryKey}\nExcluded rows: ${qs.excludedRowKeys.size}\nFormat: ${ctx.format}`
                 );
@@ -68,7 +69,7 @@ export const QueryAwareSelectAll: React.VFC = () => {
     const selectionSummary = React.useMemo(() => {
         if (querySelection.mode === "none") return "No rows selected";
         if (querySelection.mode === "explicit") return `${querySelection.selectedRowKeys.size} rows selected`;
-        if (querySelection.mode === "all-in-query") {
+        if (querySelection.mode === ALL_IN_QUERY) {
             const excluded = querySelection.excludedRowKeys.size;
             if (excluded === 0) {
                 return `All ${(querySelection.estimatedTotalRows ?? 0).toLocaleString()} rows selected`;

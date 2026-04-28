@@ -4,6 +4,7 @@ node_modules*
 .tool-versions
 .idea
 .cache
+.claude/
 pubsub-debug.log
 storybook-build/
 coverage/
